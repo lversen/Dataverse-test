@@ -206,10 +206,15 @@ if ($UseSpotVM) {
 # Set OS and credentials
 if ($useSSHKey) {
     # Configure for SSH key authentication
+    # Create a dummy credential object (required by Azure even for SSH key auth)
+    $dummyPassword = ConvertTo-SecureString "DummyPassword123!" -AsPlainText -Force
+    $cred = New-Object System.Management.Automation.PSCredential ($AdminUsername, $dummyPassword)
+    
     $vmConfig = Set-AzVMOperatingSystem `
         -VM $vmConfig `
         -Linux `
         -ComputerName $VMName `
+        -Credential $cred `
         -DisablePasswordAuthentication
     
     # Add SSH public key
@@ -261,7 +266,6 @@ $vmConfig = Set-AzVMBootDiagnostic -VM $vmConfig -Disable
 Write-Host "Creating Virtual Machine (this may take several minutes)..." -ForegroundColor Cyan
 try {
     $vm = New-AzVM `
-        -adminUsername "azureuser" `
         -ResourceGroupName $ResourceGroupName `
         -Location $Location `
         -VM $vmConfig
@@ -275,54 +279,59 @@ $publicIp = Get-AzPublicIpAddress -ResourceGroupName $ResourceGroupName -Name "$
 $ipAddress = $publicIp.IpAddress
 
 # Create Auto-Shutdown Schedule (saves costs!)
-Write-Host "Setting up auto-shutdown at 19:00 CET..." -ForegroundColor Cyan
-$shutdownTime = "1900"
-$timeZone = "W. Europe Standard Time"
+if ($vm -and $vm.Id) {
+    Write-Host "Setting up auto-shutdown at 19:00 CET..." -ForegroundColor Cyan
+    $shutdownTime = "1900"
+    $timeZone = "W. Europe Standard Time"
 
-$properties = @{
-    "status" = "Enabled"
-    "taskType" = "ComputeVmShutdownTask"
-    "dailyRecurrence" = @{
-        "time" = $shutdownTime
+    $properties = @{
+        "status" = "Enabled"
+        "taskType" = "ComputeVmShutdownTask"
+        "dailyRecurrence" = @{
+            "time" = $shutdownTime
+        }
+        "timeZoneId" = $timeZone
+        "targetResourceId" = $vm.Id
+        "notificationSettings" = @{
+            "status" = "Disabled"
+        }
     }
-    "timeZoneId" = $timeZone
-    "targetResourceId" = $vm.Id
-    "notificationSettings" = @{
-        "status" = "Disabled"
-    }
-}
 
-New-AzResource `
-    -ResourceId "/subscriptions/$((Get-AzContext).Subscription.Id)/resourceGroups/$ResourceGroupName/providers/Microsoft.DevTestLab/schedules/shutdown-computevm-$VMName" `
-    -Location $Location `
-    -Properties $properties `
-    -Force | Out-Null
-
-Write-Host "`nDeployment completed successfully!" -ForegroundColor Green
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "VM Name: $VMName" -ForegroundColor White
-Write-Host "Resource Group: $ResourceGroupName" -ForegroundColor White
-Write-Host "Public IP: $ipAddress" -ForegroundColor White
-Write-Host "SSH Command: ssh $AdminUsername@$ipAddress" -ForegroundColor Yellow
-Write-Host "Username: $AdminUsername" -ForegroundColor White
-Write-Host "VM Size: $VMSize" -ForegroundColor White
-if ($useSSHKey) {
-    Write-Host "Authentication: SSH Key" -ForegroundColor Green
-    Write-Host "SSH Key Used: $SSHKeyPath" -ForegroundColor Green
+    New-AzResource `
+        -ResourceId "/subscriptions/$((Get-AzContext).Subscription.Id)/resourceGroups/$ResourceGroupName/providers/Microsoft.DevTestLab/schedules/shutdown-computevm-$VMName" `
+        -Location $Location `
+        -Properties $properties `
+        -Force | Out-Null
 } else {
-    Write-Host "Authentication: Password" -ForegroundColor Yellow
-    Write-Host "Password: $plainPassword" -ForegroundColor Yellow
+    Write-Host "VM creation failed - skipping auto-shutdown configuration" -ForegroundColor Yellow
 }
-if ($UseSpotVM) {
-    Write-Host "VM Type: SPOT VM (Maximum cost savings!)" -ForegroundColor Green
-}
-Write-Host "Auto-shutdown: Daily at $shutdownTime $timeZone" -ForegroundColor Yellow
-Write-Host "========================================" -ForegroundColor Cyan
 
-# Output connection details to file
-$outputFile = ".\dataverse-vm-connection.txt"
-if ($useSSHKey) {
-    @"
+if ($vm) {
+    Write-Host "`nDeployment completed successfully!" -ForegroundColor Green
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "VM Name: $VMName" -ForegroundColor White
+    Write-Host "Resource Group: $ResourceGroupName" -ForegroundColor White
+    Write-Host "Public IP: $ipAddress" -ForegroundColor White
+    Write-Host "SSH Command: ssh $AdminUsername@$ipAddress" -ForegroundColor Yellow
+    Write-Host "Username: $AdminUsername" -ForegroundColor White
+    Write-Host "VM Size: $VMSize" -ForegroundColor White
+    if ($useSSHKey) {
+        Write-Host "Authentication: SSH Key" -ForegroundColor Green
+        Write-Host "SSH Key Used: $SSHKeyPath" -ForegroundColor Green
+    } else {
+        Write-Host "Authentication: Password" -ForegroundColor Yellow
+        Write-Host "Password: $plainPassword" -ForegroundColor Yellow
+    }
+    if ($UseSpotVM) {
+        Write-Host "VM Type: SPOT VM (Maximum cost savings!)" -ForegroundColor Green
+    }
+    Write-Host "Auto-shutdown: Daily at $shutdownTime $timeZone" -ForegroundColor Yellow
+    Write-Host "========================================" -ForegroundColor Cyan
+
+    # Output connection details to file
+    $outputFile = ".\dataverse-vm-connection.txt"
+    if ($useSSHKey) {
+        @"
 Dataverse VM Connection Details
 ==============================
 VM Name: $VMName
@@ -341,25 +350,9 @@ To connect:
 
 If connection fails, ensure your SSH agent has the key loaded:
   ssh-add $($SSHKeyPath -replace '\.pub','')
-
-# Estimated costs
-Write-Host "`nEstimated Monthly Costs (Non-Production):" -ForegroundColor Yellow
-if ($UseSpotVM) {
-    Write-Host "  Spot VM ($VMSize): ~€10-15/month" -ForegroundColor Green
-    Write-Host "  OS Disk (64GB SSD): ~€5/month" -ForegroundColor Green
-    Write-Host "  Data Disk (128GB SSD): ~€10/month" -ForegroundColor Green
-    Write-Host "  Public IP: ~€3/month" -ForegroundColor Green
-    Write-Host "  Total: ~€28-33/month (with auto-shutdown)" -ForegroundColor Cyan
-} else {
-    Write-Host "  VM ($VMSize): ~€52/month" -ForegroundColor Green
-    Write-Host "  OS Disk (64GB SSD): ~€5/month" -ForegroundColor Green
-    Write-Host "  Data Disk (128GB SSD): ~€10/month" -ForegroundColor Green
-    Write-Host "  Public IP: ~€3/month" -ForegroundColor Green
-    Write-Host "  Total: ~€70/month (€35/month with auto-shutdown)" -ForegroundColor Cyan
-},'')
 "@ | Out-File -FilePath $outputFile
-} else {
-    @"
+    } else {
+        @"
 Dataverse VM Connection Details
 ==============================
 VM Name: $VMName
@@ -376,22 +369,26 @@ Auto-shutdown configured for 19:00 CET daily
 SECURITY TIP: Consider using SSH keys instead of passwords!
 Generate one with: ssh-keygen -t ed25519
 "@ | Out-File -FilePath $outputFile
-}
+    }
 
-Write-Host "`nConnection details saved to: $outputFile" -ForegroundColor Green
+    Write-Host "`nConnection details saved to: $outputFile" -ForegroundColor Green
 
-# Estimated costs
-Write-Host "`nEstimated Monthly Costs (Non-Production):" -ForegroundColor Yellow
-if ($UseSpotVM) {
-    Write-Host "  Spot VM ($VMSize): ~€10-15/month" -ForegroundColor Green
-    Write-Host "  OS Disk (64GB SSD): ~€5/month" -ForegroundColor Green
-    Write-Host "  Data Disk (128GB SSD): ~€10/month" -ForegroundColor Green
-    Write-Host "  Public IP: ~€3/month" -ForegroundColor Green
-    Write-Host "  Total: ~€28-33/month (with auto-shutdown)" -ForegroundColor Cyan
+    # Estimated costs
+    Write-Host "`nEstimated Monthly Costs (Non-Production):" -ForegroundColor Yellow
+    if ($UseSpotVM) {
+        Write-Host "  Spot VM ($VMSize): ~€10-15/month" -ForegroundColor Green
+        Write-Host "  OS Disk (64GB SSD): ~€5/month" -ForegroundColor Green
+        Write-Host "  Data Disk (128GB SSD): ~€10/month" -ForegroundColor Green
+        Write-Host "  Public IP: ~€3/month" -ForegroundColor Green
+        Write-Host "  Total: ~€28-33/month (with auto-shutdown)" -ForegroundColor Cyan
+    } else {
+        Write-Host "  VM ($VMSize): ~€52/month" -ForegroundColor Green
+        Write-Host "  OS Disk (64GB SSD): ~€5/month" -ForegroundColor Green
+        Write-Host "  Data Disk (128GB SSD): ~€10/month" -ForegroundColor Green
+        Write-Host "  Public IP: ~€3/month" -ForegroundColor Green
+        Write-Host "  Total: ~€70/month (€35/month with auto-shutdown)" -ForegroundColor Cyan
+    }
 } else {
-    Write-Host "  VM ($VMSize): ~€52/month" -ForegroundColor Green
-    Write-Host "  OS Disk (64GB SSD): ~€5/month" -ForegroundColor Green
-    Write-Host "  Data Disk (128GB SSD): ~€10/month" -ForegroundColor Green
-    Write-Host "  Public IP: ~€3/month" -ForegroundColor Green
-    Write-Host "  Total: ~€70/month (€35/month with auto-shutdown)" -ForegroundColor Cyan
+    Write-Error "VM deployment failed! Check the error messages above."
+    exit 1
 }

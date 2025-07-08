@@ -2,34 +2,17 @@ Dataverse VM Connection Details
 ==============================
 VM Name: dataverse-dev-vm
 Resource Group: dataverse-nonprod-rg
-Public IP: Not Assigned
-SSH Command: ssh azureuser@Not Assigned
+Public IP: 40.85.97.190
+SSH Command: ssh azureuser@40.85.97.190
 Username: azureuser
-Authentication: SSH Key (C:\Users\siv017\.ssh\id_ed25519.pub)
+Authentication: SSH Key (C:\Users\sebas\.ssh\id_ed25519.pub)
 
 Dataverse URL (after installation): http://
 
 Auto-shutdown configured for 19:00 CET daily
 
 To connect:
-  ssh azureuser@Not Assigned
+  ssh azureuser@40.85.97.190
 
 If connection fails, ensure your SSH agent has the key loaded:
-  ssh-add C:\Users\siv017\.ssh\id_ed25519
-
-# Estimated costs
-Write-Host "
-Estimated Monthly Costs (Non-Production):" -ForegroundColor Yellow
-if (True) {
-    Write-Host "  Spot VM (Standard_B2as_v2): ~€10-15/month" -ForegroundColor Green
-    Write-Host "  OS Disk (64GB SSD): ~€5/month" -ForegroundColor Green
-    Write-Host "  Data Disk (128GB SSD): ~€10/month" -ForegroundColor Green
-    Write-Host "  Public IP: ~€3/month" -ForegroundColor Green
-    Write-Host "  Total: ~€28-33/month (with auto-shutdown)" -ForegroundColor Cyan
-} else {
-    Write-Host "  VM (Standard_B2as_v2): ~€52/month" -ForegroundColor Green
-    Write-Host "  OS Disk (64GB SSD): ~€5/month" -ForegroundColor Green
-    Write-Host "  Data Disk (128GB SSD): ~€10/month" -ForegroundColor Green
-    Write-Host "  Public IP: ~€3/month" -ForegroundColor Green
-    Write-Host "  Total: ~€70/month (€35/month with auto-shutdown)" -ForegroundColor Cyan
-},'')
+  ssh-add C:\Users\sebas\.ssh\id_ed25519

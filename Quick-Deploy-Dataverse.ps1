@@ -82,7 +82,7 @@ $deployParams = @{
     VMName = $vmName
     VMSize = $vmSize
     UseSpotVM = $useSpotVM
-    AdminUsername =  $AdminUsername
+    AdminUsername = $AdminUsername
 }
 
 if ($hasSSHKey) {
@@ -90,15 +90,38 @@ if ($hasSSHKey) {
 }
 
 # Deploy the VM
+$deploymentSuccess = $false
 try {
     if (Test-Path ".\Deploy-DataverseVM.ps1") {
-        $result = .\Deploy-DataverseVM.ps1 @deployParams
+        .\Deploy-DataverseVM.ps1 @deployParams
+        
+        # Check if VM was actually created
+        Start-Sleep -Seconds 5
+        $vmCheck = Get-AzVM -ResourceGroupName $resourceGroup -Name $vmName -ErrorAction SilentlyContinue
+        if ($vmCheck) {
+            $deploymentSuccess = $true
+            Write-Host "✓ VM deployment verified!" -ForegroundColor Green
+        }
     } else {
         Write-Error "Deploy-DataverseVM.ps1 not found!"
         exit 1
     }
 } catch {
     Write-Error "Deployment failed: $_"
+}
+
+if (-not $deploymentSuccess) {
+    # Double-check if VM exists (sometimes the check is too quick)
+    Start-Sleep -Seconds 10
+    $vmCheck = Get-AzVM -ResourceGroupName $resourceGroup -Name $vmName -ErrorAction SilentlyContinue
+    if ($vmCheck) {
+        $deploymentSuccess = $true
+        Write-Host "✓ VM deployment verified on second check!" -ForegroundColor Green
+    }
+}
+
+if (-not $deploymentSuccess) {
+    Write-Error "VM deployment failed. Please check the error messages above and try again."
     exit 1
 }
 
@@ -107,15 +130,29 @@ Write-Host "`n⏳ Waiting for VM to be fully ready..." -ForegroundColor Yellow
 Start-Sleep -Seconds 30
 
 # Get VM details
-$vm = Get-AzVM -ResourceGroupName $resourceGroup -Name $vmName
-$pip = Get-AzPublicIpAddress -ResourceGroupName $resourceGroup -Name "$vmName-pip"
-$ipAddress = $pip.IpAddress
+$vm = Get-AzVM -ResourceGroupName $resourceGroup -Name $vmName -ErrorAction SilentlyContinue
+if (-not $vm) {
+    Write-Error "VM not found. Deployment may have failed."
+    exit 1
+}
+
+$pip = Get-AzPublicIpAddress -ResourceGroupName $resourceGroup -Name "$vmName-pip" -ErrorAction SilentlyContinue
+if ($pip) {
+    $ipAddress = $pip.IpAddress
+}
 
 if (-not $ipAddress) {
     Write-Host "Waiting for IP address assignment..." -ForegroundColor Yellow
     Start-Sleep -Seconds 20
-    $pip = Get-AzPublicIpAddress -ResourceGroupName $resourceGroup -Name "$vmName-pip"
-    $ipAddress = $pip.IpAddress
+    $pip = Get-AzPublicIpAddress -ResourceGroupName $resourceGroup -Name "$vmName-pip" -ErrorAction SilentlyContinue
+    if ($pip) {
+        $ipAddress = $pip.IpAddress
+    }
+}
+
+if (-not $ipAddress) {
+    Write-Error "Failed to get public IP address. VM may not have been created properly."
+    exit 1
 }
 
 Write-Host "✓ VM is ready! IP: $ipAddress" -ForegroundColor Green
@@ -128,7 +165,7 @@ if ($installPrereqs -ne 'n') {
     
     $setupParams = @{
         VMIPAddress = $ipAddress
-        Username = "azureuser"
+        Username = $AdminUsername
     }
     
     if ($hasSSHKey) {
@@ -151,7 +188,7 @@ Write-Host "Resource Group: $resourceGroup" -ForegroundColor White
 Write-Host "VM Name: $vmName" -ForegroundColor White
 Write-Host "VM Size: $vmSize" -ForegroundColor White
 Write-Host "Public IP: $ipAddress" -ForegroundColor White
-Write-Host "SSH Command: ssh azureuser@$ipAddress" -ForegroundColor Yellow
+Write-Host "SSH Command: ssh $AdminUsername@$ipAddress" -ForegroundColor Yellow
 if ($useSpotVM) {
     Write-Host "VM Type: Spot VM (Cost Optimized)" -ForegroundColor Green
 }
@@ -169,7 +206,7 @@ if ($useSpotVM) {
 # Next steps
 Write-Host "`n📝 Next Steps:" -ForegroundColor Cyan
 Write-Host "1. SSH to your VM:" -ForegroundColor White
-Write-Host "   ssh azureuser@$ipAddress" -ForegroundColor Yellow
+Write-Host "   ssh $AdminUsername@$ipAddress" -ForegroundColor Yellow
 Write-Host "`n2. Download Dataverse installer:" -ForegroundColor White
 Write-Host "   wget https://github.com/IQSS/dataverse/releases/download/v6.1/dvinstall.zip" -ForegroundColor Yellow
 Write-Host "   unzip dvinstall.zip" -ForegroundColor Yellow
@@ -188,7 +225,7 @@ Write-Host "• Create backup: .\Manage-DataverseVM.ps1 -Action Backup" -Foregro
 # Save quick connect script
 $quickConnect = @"
 # Quick connect to Dataverse VM
-ssh azureuser@$ipAddress
+ssh $AdminUsername@$ipAddress
 
 # Or open in browser
 Start-Process "http://${ipAddress}:8080"
